@@ -10,6 +10,7 @@
 	//CommonJs
 	if (typeof exports === "object" && typeof module === "object") {
   	module.exports = factory()
+
   	return
 	}
 
@@ -17,7 +18,6 @@
 	if (typeof window !== "undefined") {
 		window.myPromise = factory()
 	}
-
 }(function () {
 	"use strict"
 
@@ -67,6 +67,7 @@
 				var then = getThen(result)
 				if (then) {
 					doResolve(then.bind(result), resolve, reject)
+
 					return
 				}
 				fulfill(result)
@@ -93,10 +94,16 @@
 
 		this.then = function (onFulfilled, onRejected) {
 			var self = this
+
 			return new Promise(function (resolve, reject) {
 				self.done(function (result) {
 					if (typeof onFulfilled === "function") {
-						resolve(onFulfilled(result))
+						if (Array.isArray(result) && result["_multi_values"]) {
+							delete result["_multi_values"]
+						} else {
+							result = [result]
+						}
+						resolve(onFulfilled.apply(null, result))
 					} else {
 						resolve(result)
 					}
@@ -113,6 +120,41 @@
 		doResolve(fn, resolve, reject)
 	}
 
+	Promise.all = function () {
+		var promises = filterThenables.apply(null, arguments)
+
+		return new Promise(function (resolve, reject) {
+			var results = []
+			var doneCount = 0
+			promises.forEach(function (promise, index) {
+				promise.then(function (result) {
+					doneCount++
+					results[index] = result
+					if (doneCount === promises.length) {
+						results["_multi_values"] = true
+						resolve(results)
+					}
+				}, function (error) {
+					reject(error)
+				})
+			})
+		})
+	}
+
+	Promise.race = function () {
+		var promises = filterThenables.apply(null, arguments)
+
+		return new Promise(function (resolve, reject) {
+			promises.forEach(function (promise) {
+				promise.then(function (result) {
+					resolve(result)
+				}, function (error) {
+					reject(error)
+				})
+			})
+		})
+	}
+
 	function Handler(onFulfilled, onRejected) {
 		if (typeof this !== "object") {
 			throw new TypeError("Handler must be constructed via new")
@@ -121,15 +163,30 @@
 		this.onRejected = typeof onRejected === "function" ? onRejected : noop
 	}
 
-	function getThen(promise) {
-		if (!promise) {
-			return null
+	function filterThenables(values) {
+		if (!Array.isArray(values)) {
+			values = Array.apply(null, arguments)
 		}
-		var type = typeof promise
-		if ((type === "object" || type === "function") && typeof promise.then === "function") {
-			return promise.then
+
+		return values.filter(thenable)
+	}
+
+	function thenable(obj) {
+		if (!obj) {
+			return false
 		}
-		return null
+		var type = typeof obj
+		if ((type === "object" || type === "function") && typeof obj.then === "function") {
+			return true
+		}
+
+		return false
+	}
+
+	function getThen(obj) {
+		if (thenable(obj)) {
+			return obj.then
+		}
 	}
 
 	function doResolve(fn, onFulfilled, onRejected) {
